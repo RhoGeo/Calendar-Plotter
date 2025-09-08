@@ -1,8 +1,20 @@
-function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu("Clock-outs")
-    .addItem("Plot calendars", "plotClockoutsAsSeparateCalendars")
-    .addToUi();
+function onOpen(e) {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu("Clock-outs")
+      .addItem("Plot calendars", "plotClockoutsAsSeparateCalendars")
+      .addToUi();
+  } catch (err) {
+    // No UI available (e.g., running headless). Ignore.
+  }
+}
+
+function notify(ss, title, message, seconds) {
+  try {
+    ss.toast(String(message), String(title || ""), seconds || 5);
+  } catch (e) {
+    Logger.log(`[${title || "Clock-outs"}] ${message}`);
+  }
 }
 
 function plotClockoutsAsSeparateCalendars() {
@@ -21,7 +33,7 @@ function plotClockoutsAsSeparateCalendars() {
   const expensesSheet = ss.getSheetByName(expensesSheetName);
 
   if (!timeOutSheet || !payslipSheet || !expensesSheet) {
-    ss.toast("Error: Missing required sheet(s).", "Clock-outs", 8);
+    notify(ss, "Clock-outs", "Error: Missing required sheet(s).", 8);
     return;
   }
 
@@ -29,11 +41,11 @@ function plotClockoutsAsSeparateCalendars() {
   const endDate = payslipSheet.getRange("B6").getValue();
 
   if (!startDate || !endDate || !(startDate instanceof Date) || !(endDate instanceof Date)) {
-    ss.toast("Error: Invalid date range in Payslip! (B5–B6)", "Clock-outs", 8);
+    notify(ss, "Clock-outs", "Error: Invalid date range in Payslip! (B5–B6)", 8);
     return;
   }
 
-  ss.toast("Generating calendars…", "Clock-outs", 5);
+  notify(ss, "Clock-outs", "Generating calendars…", 5);
 
   const endDateClamped = new Date(endDate);
   endDateClamped.setHours(23, 59, 59, 999);
@@ -176,5 +188,5 @@ function plotClockoutsAsSeparateCalendars() {
   }
   expensesSheet.setRowHeight(expensesSheet.getRange(calendarStartCell).getRow() + 1, 30);
 
-  ss.toast("Clock-out calendars with combined POD and summaries generated successfully.", "Clock-outs", 5);
+  notify(ss, "Clock-outs", "Clock-out calendars with combined POD and summaries generated successfully.", 5);
 }
