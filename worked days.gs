@@ -158,7 +158,12 @@ function plotClockoutsAsSeparateCalendars() {
           info.podByRider.forEach(v => (datePOD += (typeof v === "number" ? v : Number(v) || 0)));
           const ridersLine = riders.join(", ");
           text = `${dayNum}\n${ridersLine}\n${datePOD} POD`;
-          bg = "#c9daf8";
+
+          // >>> CHANGE START: highlight red when exactly 1 or 3 riders
+          const numRiders = riders.length;
+          const isUnderOrOver = (numRiders === 1 || numRiders === 3);
+          bg = isUnderOrOver ? "#f4cccc" : "#c9daf8";
+          // <<< CHANGE END
         }
 
         weekTexts.push(text);
