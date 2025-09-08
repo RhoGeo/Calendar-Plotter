@@ -4,16 +4,15 @@ function plotClockoutsAsSeparateCalendars() {
   const expensesSheetName = "Riders";
   const calendarStartCell = "A20";
 
-  // Fixed summary output rows
   const summaryStartRow = 15;
-  const summaryStartCol = 1; // Column A
+  const summaryStartCol = 1;
   const currencyFormat = "₱#,##0";
 
   try {
-    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const timeOutSheet = spreadsheet.getSheetByName(timeOutReportSheetName);
-    const payslipSheet = spreadsheet.getSheetByName(payslipSheetName);
-    const expensesSheet = spreadsheet.getSheetByName(expensesSheetName);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const timeOutSheet = ss.getSheetByName(timeOutReportSheetName);
+    const payslipSheet = ss.getSheetByName(payslipSheetName);
+    const expensesSheet = ss.getSheetByName(expensesSheetName);
 
     if (!timeOutSheet || !payslipSheet || !expensesSheet) {
       SpreadsheetApp.getUi().alert("Error: One or more required sheets were not found.");
@@ -28,108 +27,119 @@ function plotClockoutsAsSeparateCalendars() {
       return;
     }
 
-    endDate.setHours(23, 59, 59, 999);
+    const endDateClamped = new Date(endDate);
+    endDateClamped.setHours(23, 59, 59, 999);
 
-    const timeOutDataRange = timeOutSheet.getRange(2, 1, timeOutSheet.getLastRow() - 1, timeOutSheet.getLastColumn());
+    const timeOutDataRange = timeOutSheet.getRange(2, 1, Math.max(0, timeOutSheet.getLastRow() - 1), timeOutSheet.getLastColumn());
     const allTimeOutData = timeOutDataRange.getValues();
 
     const accounts = ["OCW Etcobanez", "OCW Mendoza", "OCW Seco"];
-    const timezone = spreadsheet.getSpreadsheetTimeZone();
+    const tz = ss.getSpreadsheetTimeZone();
     let currentPlotRow = expensesSheet.getRange(calendarStartCell).getRow();
     const calendarStartCol = expensesSheet.getRange(calendarStartCell).getColumn();
 
-    // Clear previous calendar content
-    expensesSheet.getRange(currentPlotRow, calendarStartCol, expensesSheet.getMaxRows() - currentPlotRow, expensesSheet.getMaxColumns() - calendarStartCol).clearContent().clearFormat();
+    expensesSheet
+      .getRange(currentPlotRow, calendarStartCol, expensesSheet.getMaxRows() - currentPlotRow + 1, expensesSheet.getMaxColumns() - calendarStartCol + 1)
+      .clearContent()
+      .clearFormat();
 
-    // Clear the summary area: A15:C18
-    expensesSheet.getRange(summaryStartRow, summaryStartCol, accounts.length + 1, 3).clearContent().clearFormat();
+    expensesSheet
+      .getRange(summaryStartRow, summaryStartCol, accounts.length + 1, 4)
+      .clearContent()
+      .clearFormat();
 
-    let totalAmount = 0;
+    let grandTotalAmount = 0;
+    let grandTotalDays = 0;
+    let grandTotalPOD = 0;
 
-    accounts.forEach((accountName, index) => {
-      const clockOutsByDate = {};
+    accounts.forEach((accountName, idx) => {
+      const daily = new Map();
 
-      allTimeOutData.forEach(row => {
-        const timestamp = new Date(row[0]);
-        const riderName = row[1];
-        const account = row[2];
+      for (const row of allTimeOutData) {
+        const ts = row[0] instanceof Date ? row[0] : new Date(row[0]);
+        const riderName = String(row[1] || "").trim();
+        const account = String(row[2] || "").trim();
+        const podRaw = row[3];
+        const pod = typeof podRaw === "number" ? podRaw : Number(podRaw) || 0;
 
-        if (/pp/i.test(riderName)) return;
+        if (!ts || isNaN(ts.getTime())) continue;
+        if (/pp/i.test(riderName)) continue;
+        if (account !== accountName) continue;
+        if (ts < startDate || ts > endDateClamped) continue;
 
-        if (timestamp >= startDate && timestamp <= endDate && account === accountName) {
-          const dateKey = Utilities.formatDate(timestamp, timezone, "M/d/yyyy");
-          if (!clockOutsByDate[dateKey]) {
-            clockOutsByDate[dateKey] = [];
-          }
-          clockOutsByDate[dateKey].push(riderName);
+        const dateKey = Utilities.formatDate(ts, tz, "M/d/yyyy");
+        if (!daily.has(dateKey)) {
+          daily.set(dateKey, { riders: new Set(), podByRider: new Map() });
         }
-      });
+        const bucket = daily.get(dateKey);
+        bucket.riders.add(riderName);
+        const prev = bucket.podByRider.get(riderName) || 0;
+        bucket.podByRider.set(riderName, Math.max(prev, pod));
+      }
 
-      const highlightCount = Object.keys(clockOutsByDate).length;
+      const highlightCount = daily.size;
+      const totalPODForAccount = Array.from(daily.values()).reduce((acc, b) => {
+        let sum = 0;
+        b.podByRider.forEach(v => (sum += (typeof v === "number" ? v : Number(v) || 0)));
+        return acc + sum;
+      }, 0);
+
       const amount = highlightCount * 2300;
-      totalAmount += amount;
 
-      // --- Write summary to A15:C17 ---
-      const summaryRow = summaryStartRow + index;
-      expensesSheet.getRange(summaryRow, 1).setValue(`${accountName} Clock-outs`);
+      grandTotalAmount += amount;
+      grandTotalDays += highlightCount;
+      grandTotalPOD += totalPODForAccount;
+
+      const summaryRow = summaryStartRow + idx;
+      expensesSheet.getRange(summaryRow, 1).setValue(accountName + " Clock-outs");
       expensesSheet.getRange(summaryRow, 2).setValue(highlightCount);
-      expensesSheet.getRange(summaryRow, 3).setValue(amount).setNumberFormat(currencyFormat);
+      expensesSheet.getRange(summaryRow, 3).setValue(totalPODForAccount);
+      expensesSheet.getRange(summaryRow, 4).setValue(amount).setNumberFormat(currencyFormat);
 
-      // --- Write the calendar ---
-      expensesSheet.getRange(currentPlotRow, calendarStartCol)
-        .setValue(`${accountName} Clock-outs`)
-        .setFontWeight("bold")
-        .setFontSize(12);
-
-      expensesSheet.getRange(currentPlotRow, calendarStartCol + 1)
-        .setValue(highlightCount)
-        .setFontWeight("bold")
-        .setFontSize(12);
-
-      expensesSheet.getRange(currentPlotRow, calendarStartCol + 2)
-        .setValue(amount)
-        .setNumberFormat(currencyFormat)
-        .setFontWeight("bold")
-        .setFontSize(12);
-
+      expensesSheet.getRange(currentPlotRow, calendarStartCol).setValue(accountName + " Clock-outs").setFontWeight("bold").setFontSize(12);
+      expensesSheet.getRange(currentPlotRow, calendarStartCol + 1).setValue(highlightCount).setFontWeight("bold").setFontSize(12);
+      expensesSheet.getRange(currentPlotRow, calendarStartCol + 2).setValue(totalPODForAccount).setFontWeight("bold").setFontSize(12);
+      expensesSheet.getRange(currentPlotRow, calendarStartCol + 3).setValue(amount).setNumberFormat(currencyFormat).setFontWeight("bold").setFontSize(12);
       currentPlotRow++;
 
       const startCalendarDate = new Date(startDate);
-      startCalendarDate.setDate(startDate.getDate() - startCalendarDate.getDay()); // Sunday start
+      startCalendarDate.setHours(0, 0, 0, 0);
+      startCalendarDate.setDate(startCalendarDate.getDate() - startCalendarDate.getDay());
 
-      const calendarHeader = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-      expensesSheet.getRange(currentPlotRow, calendarStartCol, 1, 7).setValues([calendarHeader]).setFontWeight("bold");
+      const header = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      expensesSheet.getRange(currentPlotRow, calendarStartCol, 1, 7).setValues([header]).setFontWeight("bold");
       currentPlotRow++;
 
-      let currentDate = new Date(startCalendarDate);
-
-      while (currentDate <= endDate || currentDate.getDay() !== 0) {
-        const weekData = [];
-        const rowBackgrounds = [];
+      let curr = new Date(startCalendarDate);
+      while (curr <= endDateClamped || curr.getDay() !== 0) {
+        const weekTexts = [];
+        const weekBgs = [];
 
         for (let i = 0; i < 7; i++) {
-          const dateKey = Utilities.formatDate(currentDate, timezone, "M/d/yyyy");
-          const dayOfMonth = currentDate.getDate();
+          const dateKey = Utilities.formatDate(curr, tz, "M/d/yyyy");
+          const dayNum = curr.getDate();
+          let text = String(dayNum);
+          let bg = "#ffffff";
 
-          let cellText = dayOfMonth;
-          let cellColor = "#ffffff";
-
-          if (currentDate >= startDate && currentDate <= endDate) {
-            if (clockOutsByDate[dateKey]) {
-              cellText = `${dayOfMonth}\n${clockOutsByDate[dateKey].join(', ')}`;
-              cellColor = "#c9daf8";
-            }
+          if (curr >= startDate && curr <= endDateClamped && daily.has(dateKey)) {
+            const info = daily.get(dateKey);
+            const riders = Array.from(info.riders);
+            let datePOD = 0;
+            info.podByRider.forEach(v => (datePOD += (typeof v === "number" ? v : Number(v) || 0)));
+            const ridersLine = riders.join(", ");
+            text = `${dayNum}\n${ridersLine}\n${datePOD} POD`;
+            bg = "#c9daf8";
           }
 
-          weekData.push(cellText);
-          rowBackgrounds.push(cellColor);
-          currentDate.setDate(currentDate.getDate() + 1);
+          weekTexts.push(text);
+          weekBgs.push(bg);
+          curr.setDate(curr.getDate() + 1);
         }
 
-        const rowRange = expensesSheet.getRange(currentPlotRow, calendarStartCol, 1, 7);
-        rowRange.setValues([weekData]);
-        rowRange.setBackgrounds([rowBackgrounds]);
-        rowRange.setVerticalAlignment("top").setWrap(true);
+        const row = expensesSheet.getRange(currentPlotRow, calendarStartCol, 1, 7);
+        row.setValues([weekTexts]);
+        row.setBackgrounds([weekBgs]);
+        row.setVerticalAlignment("top").setWrap(true);
         expensesSheet.setRowHeight(currentPlotRow, 100);
         currentPlotRow++;
       }
@@ -137,22 +147,18 @@ function plotClockoutsAsSeparateCalendars() {
       currentPlotRow += 2;
     });
 
-    // Total amount in C18
-    expensesSheet.getRange(summaryStartRow + accounts.length, 3)
-      .setValue(totalAmount)
-      .setNumberFormat(currencyFormat)
-      .setFontWeight("bold")
-      .setFontSize(12)
-      .setBackground("#d9ead3");
+    const totalsRow = summaryStartRow + accounts.length;
+    expensesSheet.getRange(totalsRow, 1).setValue("TOTALS").setFontWeight("bold");
+    expensesSheet.getRange(totalsRow, 2).setValue(grandTotalDays).setFontWeight("bold");
+    expensesSheet.getRange(totalsRow, 3).setValue(grandTotalPOD).setFontWeight("bold");
+    expensesSheet.getRange(totalsRow, 4).setValue(grandTotalAmount).setNumberFormat(currencyFormat).setFontWeight("bold").setBackground("#d9ead3");
 
-    // Set calendar column widths
     for (let i = 0; i < 7; i++) {
       expensesSheet.setColumnWidth(calendarStartCol + i, 120);
     }
-
     expensesSheet.setRowHeight(expensesSheet.getRange(calendarStartCell).getRow() + 1, 30);
 
-    SpreadsheetApp.getUi().alert("Clock-out calendars and summaries generated successfully.");
+    SpreadsheetApp.getUi().alert("Clock-out calendars with combined POD and summaries generated successfully.");
   } catch (e) {
     SpreadsheetApp.getUi().alert("An error occurred: " + e.message);
   }
